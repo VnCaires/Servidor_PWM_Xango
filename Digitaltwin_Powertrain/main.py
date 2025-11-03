@@ -594,4 +594,4 @@ def update_graph_from_stored(btn_velocity, btn_currents, btn_voltages, btn_flux,
 
 if __name__ == '__main__':
     print("")
-    app.run(debug=True)
+    app.run()
