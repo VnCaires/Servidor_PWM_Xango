@@ -8,6 +8,74 @@ import plotly.express as px
 import dash_bootstrap_components as dbc
 from models import BatteryPack, Inversor, Tire, Transmission, Vehicle, Motor
 from simulation.Simulation import Simulation
+import psutil, os
+
+
+def _to_list(x):
+    """Converte arrays / numpy / pandas Series para listas simples, sem copiar desnecessário."""
+    if x is None:
+        return []
+    try:
+        # muitos objetos numpy/pandas têm tolist()
+        return x.tolist()
+    except Exception:
+        try:
+            return list(x)
+        except Exception:
+            return [x]
+
+def extract_sim_data(sim):
+    """
+    Retorna apenas os vetores/valores necessários para gerar os gráficos.
+    Converte tudo para tipos JSON-friendly (listas e números).
+    """
+    data = {}
+    # tempo
+    data['tempo'] = _to_list(getattr(sim, 'tempo', getattr(sim, 'time', [])))
+    # mecânica / torque
+    data['velocidade'] = _to_list(getattr(sim, 'velocidade', []))
+    data['conjugado'] = _to_list(getattr(sim, 'conjugado', []))
+    data['conjcarga'] = _to_list(getattr(sim, 'conjcarga', []))
+    # correntes
+    data['corrented'] = _to_list(getattr(sim, 'corrented', []))
+    data['correnteq'] = _to_list(getattr(sim, 'correnteq', []))
+    data['corrente1'] = _to_list(getattr(sim, 'corrente1', []))
+    data['corrente2'] = _to_list(getattr(sim, 'corrente2', []))
+    data['corrente3'] = _to_list(getattr(sim, 'corrente3', []))
+    # tensões
+    data['tensaosd'] = _to_list(getattr(sim, 'tensaosd', []))
+    data['vd_real'] = _to_list(getattr(sim, 'vd_real', []))
+    data['tensaosq'] = _to_list(getattr(sim, 'tensaosq', []))
+    data['vq_real'] = _to_list(getattr(sim, 'vq_real', []))
+    data['tensao1'] = _to_list(getattr(sim, 'tensao1', []))
+    data['tensao2'] = _to_list(getattr(sim, 'tensao2', []))
+    data['tensao3'] = _to_list(getattr(sim, 'tensao3', []))
+    # fluxos e temperatura
+    data['fluxosd'] = _to_list(getattr(sim, 'fluxosd', []))
+    data['fluxosq'] = _to_list(getattr(sim, 'fluxosq', []))
+    data['temperatura'] = _to_list(getattr(sim, 'temperatura', []))
+    # sinais de controle
+    data['vd_control'] = _to_list(getattr(sim, 'vd_control', []))
+    data['vq_control'] = _to_list(getattr(sim, 'vq_control', []))
+    data['speed_error'] = _to_list(getattr(sim, 'speed_error', []))
+    # vehicle performance
+    data['vehicle_velocity'] = _to_list(getattr(sim, 'vehicle_velocity', []))
+    data['vehicle_acceleration'] = _to_list(getattr(sim, 'vehicle_acceleration', []))
+    data['tractive_force_hist'] = _to_list(getattr(sim, 'tractive_force_hist', []))
+    data['resistive_force_hist'] = _to_list(getattr(sim, 'resistive_force_hist', []))
+    data['wheel_torque'] = _to_list(getattr(sim, 'wheel_torque', []))
+    # tire
+    data['slip_ratio_hist'] = _to_list(getattr(sim, 'slip_ratio_hist', []))
+    data['longitudinal_force_hist'] = _to_list(getattr(sim, 'longitudinal_force_hist', []))
+    # battery
+    data['battery_voltage_hist'] = _to_list(getattr(sim, 'battery_voltage_hist', []))
+    data['battery_current_hist'] = _to_list(getattr(sim, 'battery_current_hist', []))
+    data['soc_hist'] = _to_list(getattr(sim, 'soc_hist', []))
+
+    # meta leve
+    data['n_points'] = len(data['tempo'])
+    return data
+
 
 def build_defaults():
     transmission = Transmission.Transmission(final_drive_ratio=4.0, efficiency=0.95)
@@ -56,7 +124,6 @@ app.layout = html.Div([
         }
     }),
     dcc.Store(id='sidebar-state', data={'visible': True}),
-    dcc.Store(id='stored-figures', data={}),
     dcc.Store(id='simulation-run-flag', data={'run': False}),
 
     html.Div([
@@ -484,17 +551,21 @@ def update_parameters(n_clicks, mass, wheel_radius, drag_coeff, frontal_area, ro
 # Callback para executar simulação e armazenar figuras
 # ---------------------
 @app.callback(
-    [Output('stored-figures', 'data'),
+    [Output('simulation-data', 'data'),
      Output('simulation-run-flag', 'data'),
      Output('loading-output', 'children')],
     [Input('run-simulation', 'n_clicks')],
     [State('parameters-store', 'data')]
 )
 def run_simulation_once(n_clicks, parameters):
+    """
+    Executa a simulação uma vez (quando o usuário clica), extrai apenas os dados necessários
+    e guarda em 'simulation-data' (dicionário leve).
+    """
     if n_clicks is None or n_clicks == 0:
         return dash.no_update, {'run': False}, ""
-    
-    # Extrair parâmetros e executar simulação
+
+    # Extrair parâmetros
     vehicle_params = parameters['vehicle']
     transmission_params = parameters['transmission']
     battery_params = parameters['battery']
@@ -502,6 +573,7 @@ def run_simulation_once(n_clicks, parameters):
     simulacao_params = parameters['simulacao']
     tire_params = parameters['tire']
 
+    # Criar instâncias (igual ao seu código)
     transmission = Transmission(**transmission_params)
     vehicle = Vehicle(**vehicle_params)
     battery = BatteryPack(**battery_params)
@@ -513,42 +585,47 @@ def run_simulation_once(n_clicks, parameters):
         lq=motor_params['lq'],
         jm=motor_params['jm'],
         kf=motor_params['kf'],
-        lambda_m=motor_params['lambda_m'],
+        lambda_m=motor_params.get('lambda_m', motor_params.get('lambda', None)),
         p=motor_params['p'],
-        valor_mu=motor_params['valor_mu'],
+        valor_mu=motor_params.get('valor_mu', motor_params.get('motor-modulation', 0.95)),
         TL=False,
-        torque=0.0 ,
-        speed_ref= motor_params['velocidade_ref']
+        torque=0.0,
+        speed_ref=motor_params.get('velocidade_ref', motor_params.get('speed_ref', 0))
     )
-    
 
- 
+    # Reduza steps para economizar memória (ex.: 100 em vez de 200)
+    steps = max(10, int(parameters.get('simulacao', {}).get('steps', 100))) if 'steps' in parameters.get('simulacao', {}) else 100
+
     sim = Simulation(
         motor=motor, vehicle=vehicle, transmission=transmission,
         battery=battery, tire=tire, inversor=Inversor(eficiencia=0.95, freq_chaveamento=1000),
-        tmax=simulacao_params['tmax'], steps=200
+        tmax=simulacao_params.get('tmax', 10), steps=steps
     )
 
+#    process = psutil.Process(os.getpid())
+#    mem_before = process.memory_info().rss / (1024 * 1024)
+#    print(f"[DEBUG] Memória antes da simulação: {mem_before:.2f} MB")
+
+    # Executar simulação (pode demorar dependendo do tmax/steps)
     sim.simulate()
-    
-    # Gerar todas as figuras
-    figures = {
-        'velocity_torque': create_velocity_torque_plot(sim),
-        'currents': create_currents_plot(sim),
-        'voltages': create_voltages_plot(sim),
-        'flux_temp': create_flux_temp_plot(sim),
-        'control': create_control_plot(sim),
-        'complete': create_complete_plot(sim),
-        'vehicle': create_vehicle_plot(sim),
-        'tire': create_tire_plot(sim),
-        'battery': create_battery_plot(sim)
+
+#    mem_after = process.memory_info().rss / (1024 * 1024)
+#    print(f"[DEBUG] Memória depois da simulação: {mem_after:.2f} MB")
+#    print(f"[DEBUG] Diferença: {mem_after - mem_before:.2f} MB")
+
+    # Extrair somente os dados essenciais e convertê-los para listas
+    sim_data = extract_sim_data(sim)
+
+    # Também armazene alguns parâmetros meta leves (opcional)
+    sim_meta = {
+        'tmax': simulacao_params.get('tmax', 10),
+        'steps': steps
     }
-    
-    stored_figures = {}
-    for key, fig in figures.items():
-        stored_figures[key] = fig.to_dict()
-    
-    return stored_figures, {'run': True}, ""
+    sim_data['_meta'] = sim_meta
+
+    # Retornar o dicionário leve para o front-end
+    return sim_data, {'run': True}, ""
+
 
 # ---------------------
 # Callback para atualizar gráfico
@@ -564,16 +641,20 @@ def run_simulation_once(n_clicks, parameters):
      Input('btn-vehicle', 'n_clicks'),
      Input('btn-tire', 'n_clicks'),
      Input('btn-battery', 'n_clicks')],
-    [State('stored-figures', 'data')]
+    [State('simulation-data', 'data')]
 )
 def update_graph_from_stored(btn_velocity, btn_currents, btn_voltages, btn_flux, btn_control,
-                            btn_complete, btn_vehicle, btn_tire, btn_battery, stored_figures):
+                            btn_complete, btn_vehicle, btn_tire, btn_battery, sim_data):
     ctx = dash.callback_context
-    if not ctx.triggered or not stored_figures:
+    if not ctx.triggered:
         return {}
-    
+    if not sim_data:
+        # sem dados de simulação ainda
+        return {}
+
     button_id = ctx.triggered[0]['prop_id'].split('.')[0]
-    
+
+    # Mapear id do botão para uma chave funcional
     figure_map = {
         'btn-velocity-torque': 'velocity_torque',
         'btn-currents': 'currents',
@@ -585,12 +666,119 @@ def update_graph_from_stored(btn_velocity, btn_currents, btn_voltages, btn_flux,
         'btn-tire': 'tire',
         'btn-battery': 'battery'
     }
-    
     figure_key = figure_map.get(button_id)
-    if figure_key and figure_key in stored_figures:
-        return stored_figures[figure_key]
-    
+    if not figure_key:
+        return {}
+
+    # Acesso por chaves no sim_data (listas simples)
+    t = sim_data.get('tempo', [])
+
+    # --- construir cada figura sob demanda ---
+    if figure_key == 'velocity_torque':
+        fig = make_subplots(rows=2, cols=1, subplot_titles=("Velocidade Mecânica", "Torque do Motor"), vertical_spacing=0.1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('velocidade', []), name='Velocidade'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('conjugado', []), name='Torque Elétrico'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('conjcarga', []), name='Torque de Carga', line=dict(dash='dash')), row=2, col=1)
+        fig.update_layout(height=700, title_text="Velocidade e Torque", template="plotly_white")
+        fig.update_xaxes(title_text="Tempo (s)", row=2, col=1)
+        fig.update_yaxes(title_text="Velocidade (RPM)", row=1, col=1)
+        fig.update_yaxes(title_text="Torque (Nm)", row=2, col=1)
+        return fig
+
+    if figure_key == 'currents':
+        fig = make_subplots(rows=2, cols=1, subplot_titles=("Correntes dq", "Correntes de Fase"), vertical_spacing=0.1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('corrented', []), name='Id'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('correnteq', []), name='Iq'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('corrente1', []), name='Fase 1'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('corrente2', []), name='Fase 2'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('corrente3', []), name='Fase 3'), row=2, col=1)
+        fig.update_layout(height=700, title_text="Correntes", template="plotly_white")
+        return fig
+
+    if figure_key == 'voltages':
+        fig = make_subplots(rows=2, cols=1, subplot_titles=("Tensões de Controle dq", "Tensões de Fase"), vertical_spacing=0.1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensaosd', []), name='Vd'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('vd_real', []), name='Vd real'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensaosq', []), name='Vq'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('vq_real', []), name='Vq real'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensao1', []), name='Fase 1'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensao2', []), name='Fase 2'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensao3', []), name='Fase 3'), row=2, col=1)
+        fig.update_layout(height=700, title_text="Tensões", template="plotly_white")
+        return fig
+
+    if figure_key == 'flux_temp':
+        fig = make_subplots(rows=2, cols=1, subplot_titles=("Fluxos Magnéticos", "Temperatura do sim"), vertical_spacing=0.1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('fluxosd', []), name='Fluxo d'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('fluxosq', []), name='Fluxo q'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('temperatura', []), name='Temperatura'), row=2, col=1)
+        fig.update_layout(height=700, title_text="Fluxos e Temperatura", template="plotly_white")
+        return fig
+
+    if figure_key == 'control':
+        fig = make_subplots(rows=2, cols=1, subplot_titles=("Sinais de Controle FOC", "Erro de Velocidade"), vertical_spacing=0.1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('vd_control', []), name='Vd control'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('vq_control', []), name='Vq control'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('speed_error', []), name='Erro de Velocidade'), row=2, col=1)
+        fig.update_layout(height=700, title_text="Sinais de Controle", template="plotly_white")
+        return fig
+
+    if figure_key == 'complete':
+        # Criar uma visão simplificada "completa" (mantendo menos traces para memória)
+        fig = make_subplots(rows=3, cols=2, subplot_titles=(
+            "Velocidade Mecânica", "Torque", "Correntes (Id/Iq)", "Correntes de Fase", "Tensões (Vd/Vq)", "Tensões de Fase"
+        ), vertical_spacing=0.08, horizontal_spacing=0.1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('velocidade', []), name='Velocidade'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('conjugado', []), name='Torque'), row=1, col=2)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('corrented', []), name='Id'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('correnteq', []), name='Iq'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('corrente1', []), name='Fase 1'), row=2, col=2)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensaosd', []), name='Vd'), row=3, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tensao1', []), name='Fase 1'), row=3, col=2)
+        fig.update_layout(height=800, title_text="Visão Completa (resumida)", template="plotly_white", hovermode="x unified", showlegend=False)
+        return fig
+
+    if figure_key == 'vehicle':
+        fig = make_subplots(rows=2, cols=2, subplot_titles=("Velocidade (km/h)", "Aceleração (m/s²)", "Forças (N)", "Torque na Roda (Nm)"), vertical_spacing=0.15, horizontal_spacing=0.1)
+        # converter velocidade para km/h
+        vel = [v * 3.6 for v in sim_data.get('vehicle_velocity', [])]
+        fig.add_trace(go.Scatter(x=t, y=vel, name='Velocidade'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('vehicle_acceleration', []), name='Aceleração'), row=1, col=2)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('tractive_force_hist', []), name='Força Trativa'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('resistive_force_hist', []), name='Forças Resistivas'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('wheel_torque', []), name='Torque na Roda'), row=2, col=2)
+        fig.update_layout(height=700, title_text="Desempenho do Veículo", template="plotly_white")
+        fig.update_yaxes(title_text="Força (N)", row=2, col=1)
+        return fig
+
+    if figure_key == 'tire':
+        fig = make_subplots(rows=1, cols=2, subplot_titles=("Slip Ratio x Tempo", "Força Longitudinal x Slip Ratio"))
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('slip_ratio_hist', []), name='Slip Ratio'), row=1, col=1)
+        # plot relação fx x slip: ordenar pontos
+        slip = sim_data.get('slip_ratio_hist', [])
+        fx = sim_data.get('longitudinal_force_hist', [])
+        if slip and fx and len(slip) == len(fx):
+            try:
+                import pandas as _pd
+                df = _pd.DataFrame({'slip': slip, 'fx': fx})
+                df_sorted = df.sort_values('slip').drop_duplicates(subset='slip')
+                fig.add_trace(go.Scatter(x=df_sorted['slip'], y=df_sorted['fx'], name='Força Longitudinal', mode='lines'), row=1, col=2)
+            except Exception:
+                # fallback sem pandas
+                fig.add_trace(go.Scatter(x=slip, y=fx, name='Força Longitudinal', mode='lines'), row=1, col=2)
+        fig.update_layout(height=500, title_text="Análise de Desempenho do Pneu", template="plotly_white")
+        return fig
+
+    if figure_key == 'battery':
+        fig = make_subplots(rows=3, cols=1, subplot_titles=("Tensão do Banco (V)", "Corrente (A)", "SoC"), vertical_spacing=0.12)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('battery_voltage_hist', []), name='Tensão Banco'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('battery_current_hist', []), name='Corrente'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=t, y=sim_data.get('soc_hist', []), name='SoC'), row=3, col=1)
+        fig.update_layout(height=700, title_text="Estado da Bateria", template="plotly_white")
+        return fig
+
     return {}
+
 
 if __name__ == '__main__':
     app.run(debug=False)
