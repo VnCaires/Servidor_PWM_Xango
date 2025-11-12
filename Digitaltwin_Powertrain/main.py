@@ -8,7 +8,7 @@ import plotly.express as px
 import dash_bootstrap_components as dbc
 from models import BatteryPack, Inversor, Tire, Transmission, Vehicle, Motor
 from simulation.Simulation import Simulation
-import psutil, os
+# import psutil, os
 
 
 def _to_list(x):
