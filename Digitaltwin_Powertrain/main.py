@@ -90,7 +90,7 @@ def build_defaults():
                   speed_ref=471.23)
 
     sim = Simulation(motor=motor, vehicle=vehicle, transmission=transmission,
-                     battery=battery, tire=tire, inversor=inversor, tmax=10, steps=10)
+                     battery=battery, tire=tire, inversor=inversor, tmax=10, steps=1000)
     return sim
 
 # ---------------------
@@ -594,7 +594,7 @@ def run_simulation_once(n_clicks, parameters):
     )
 
     # Reduza steps para economizar memória (ex.: 100 em vez de 200)
-    steps = max(10, int(parameters.get('simulacao', {}).get('steps', 100))) if 'steps' in parameters.get('simulacao', {}) else 100
+    steps = max(10, int(parameters.get('simulacao', {}).get('steps', 1000))) if 'steps' in parameters.get('simulacao', {}) else 1000
 
     sim = Simulation(
         motor=motor, vehicle=vehicle, transmission=transmission,
